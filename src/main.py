@@ -4,27 +4,27 @@
 #       2022.11.18
 #
 
+import math
 import utime
 from machine import Pin, PWM
-
 
 print("##### Load cell & servo test ###########################")
 
 ### switch & LED #####
 sw1 = Pin(5, mode = Pin.IN, pull = Pin.PULL_UP)
-ledWhite = Pin(2, Pin.OUT)
+blueLed = Pin(2, Pin.OUT)
 # Power on LED
-ledWhite.on()
+blueLed.on()
 utime.sleep_ms(500)
-ledWhite.off()
+blueLed.off()
 utime.sleep_ms(300)
-ledWhite.on()
+blueLed.on()
 utime.sleep_ms(100)
-ledWhite.off()
+blueLed.off()
 utime.sleep_ms(100)
-ledWhite.on()
+blueLed.on()
 utime.sleep_ms(100)
-ledWhite.off()
+blueLed.off()
 
 
 ### loadcell init #####
@@ -37,23 +37,33 @@ utime.sleep_ms(1)
 hx711Clock.off()
 utime.sleep_ms(1)
 
-V_out = 0.000728  # センサ出力電圧 [V/V] @maxLoad 0.65~0.95mV
-maxLoad = 500.0  # センサ定格 [g]
-R1 = 12000  # R1抵抗値 [Ω] 3.3V版に改造
-R2 = 8200  # R2抵抗値 [Ω]
-Vbg = 1.25  # アナログリファレンス電圧 [V]
-aVdd = Vbg * (R1+R2)/R2  # アナログ電圧フルスケールAVdd [V]
+V_out = 0.000728        # センサ出力電圧 [V/V] @maxLoad 0.65~0.95mV
+maxLoad = 500.0         # センサ定格 [g]
+R1 = 12000              # R1抵抗値 [Ω] 3.3V版に改造
+R2 = 8200               # R2抵抗値 [Ω]
+Vbg = 1.25              # アナログリファレンス電圧 [V]
+aVdd = Vbg * (R1+R2)/R2 # アナログ電圧フルスケールAVdd [V]
 ADC1bit = aVdd / 2**24  # フルスケールを24bitで割る [V]
-ADCGain = 128  # A/D ゲイン
+ADCGain = 128           # A/Dゲイン
 Scale = V_out * aVdd / maxLoad  # ロードセル特性　[V/gf]
+k = ADC1bit / (Scale * ADCGain) #計算の係数
 
+#analog value
+def digiVtoWeight(adcV, zeroV):
+    wgf = (adcV - zeroV) * k
+    return wgf
+
+#digtal data
 def readAdc():
+    #ret: adValue - signed 23bit
+
     adValue = 0
     while True:
+        #ADc wait
         if hx711Data.value() == 0:
             break
 
-    for i in range(24):
+    for _ in range(24):
         hx711Clock.value(1)
         # utime.sleep_us(0)      #遅延いれると遅すぎてダメ 20us->70usになる
         hx711Clock.value(0)
@@ -63,14 +73,15 @@ def readAdc():
     hx711Clock.value(1)
     hx711Clock.value(0)
     if (adValue & 0x00800000) != 0:
-        # マイナスの時の処理(24ビット)
+        # マイナスの時の処理(24ビット数)
         adValue = (adValue ^ 0xfffffe) * -1
     #print(f"{adValue:06x}", end = '  ')
     return adValue
 
 def averageData(n, dotDisp):
+    #ret: ave - signed 23bit
     dataSum = 0
-    for i in range(n):
+    for _ in range(n):
         dataSum += readAdc()
         if dotDisp == 1:
             print('.', end = "")
@@ -78,40 +89,48 @@ def averageData(n, dotDisp):
     #print("average = 0x{:06x}".format(ave), end = '  ')
     return ave
 
-def tare():
+def tareZero():
     # 風袋
     print('zero set ', end = '')
     dataZero = averageData(10, 1)
     print(' OK!')
     return dataZero
 
-def loadcellTest():
-    # ロードセルの連続表示　デバッグ用
+#test
+def testLoadcell():
+    # ロードセルの連続表示　テスト用
+    zeroV = tareZero()
     while True:
-        weightT = (readAdc() - ZeroOffset) * (ADC1bit / (Scale * ADCGain))
-        print(f"{weightT:8.2f}gf")
+        wgf = digiVtoWeight(readAdc(), zeroV)
+        print(f"{wgf:7.2f}gf")
 
 
 ### servo init #####
-armR = 10 #サーボホーンの腕の長さ[mm]
-startDeg = -20	#初期角度[°]
-endDeg = 30	    #初期角度[°]
-incDeg = 2      #角度増分[°]
-
 servo1 = PWM(Pin(13), freq=50)  # PWM freq 1~1000Hz
 # servo 50Hz = 20msec
+
+armR = 8.5      #サーボホーンの腕の長さ[mm]
+startDeg = -24	#初期角度[°]
+endDeg = 24	    #終角度[°]
+incDeg = 2      #角度増分[°]
+degOffset = 4   #サーボ中立電圧位置でのズレ[°]
+stepbyDeg = armR * math.sin(math.radians(1))
+
 
 def pwmDuty(percent):
     value = 1024 * percent / 100  # duty 0~1024
     return int(value)
 
-def servoDegree(setDeg):
-    if (setDeg < -90) or (setDeg > 90):
+def servoDegtoHex(setDeg):
+    if (setDeg < startDeg) or (setDeg > endDeg):
+        #可動範囲外の時リターン
         return 0
-    v0 = 74  # 1.45msec = 7.25%
-    vn90 = 120  # 2.4msec = 12.0%
-    vp90 = 30  # 0.5msec = 2.5%
-    value = -setDeg * (vn90 - vp90) / 180 + v0  #2度ごとにしか設定できない
+
+    v0 = 74         # 1.45msec = 7.25%
+    vn90 = 120      # 2.4msec = 12.0%
+    vp90 = 30       # 0.5msec = 2.5%
+    degP = setDeg + degOffset          #サーボへの指令角度
+    value = -degP * (vn90 - vp90) / 180 + v0    #2度ごとにしか設定できない
     return int(value)
 
 def servoPos():
@@ -120,33 +139,33 @@ def servoPos():
 
     while True:
         print('zero position')
-        servo1.duty(servoDegree(0))         ###### サーボ　ゼロ位置
+        servo1.duty(servoDegtoHex(0))         ###### サーボ　ゼロ位置
         utime.sleep(1)
         while True:
-            if oneSec() == 1:
+            if tSecWait(1) == 1:
                 break
 
         print('start position')
-        servo1.duty(servoDegree(startDeg))  ###### サーボ　スタート位置
+        servo1.duty(servoDegtoHex(startDeg))  ###### サーボ　スタート位置
         utime.sleep(1)
         while True:
-            if oneSec() == 1:
+            if tSecWait(1) == 1:
                 break
 
         print('end position')
-        servo1.duty(servoDegree(endDeg))    ###### サーボ　エンド位置
+        servo1.duty(servoDegtoHex(endDeg))    ###### サーボ　エンド位置
         utime.sleep(1)
         while True:
-            if oneSec() == 1:
+            if tSecWait(1) == 1:
                 break
 
 def servoMove():
     #サーボを動かして見てみる
     print('SERVO TEST   push button to 1step rotate')
-    posDeg = 0
-    degInc = 2
+    posDeg = 0  #スタート角度
+    degInc = 2  #変化分
     while True:
-        servo1.duty(servoDegree(posDeg))         ###### サーボ　ゼロ位置
+        servo1.duty(servoDegtoHex(posDeg))         ###### サーボ　ゼロ位置
         print(f"{posDeg:3d}deg")
         utime.sleep_ms(200)
 
@@ -163,9 +182,9 @@ def servoMove():
 
 
 ### 入力等 サブ #####
-def oneSec():
-    #1秒のボタン入力待ち
-    for i in range(10):
+def tSecWait(t):
+    #t秒のボタン入力待ち
+    for _ in range(t * 10):
         utime.sleep_ms(100)
         if sw1.value() == 0:
             return 1
@@ -174,22 +193,22 @@ def oneSec():
 
 ### テスト #####
 #ZeroOffset = tare()    ###### 秤のゼロ合わせ
-#loadcellTest()         ###### loadcell 連続表示テスト
+#testLoadcell()         ###### loadcell 連続表示テスト
 #servoPos()             ###### サーボの位置
 #servoMove()            ######サーボを動かしてみる
 
 
 #####  MAIN ####################################################################
 data = []
+n = 0
 
-# main on LED
 utime.sleep_ms(500)
-ledWhite.on()
-
+# ready LED on
+blueLed.on()
 
 while True:
     #サーボ初期位置
-    servo1.duty(servoDegree(startDeg))
+    servo1.duty(servoDegtoHex(startDeg))
     utime.sleep_ms(1000)
 
     print('push button to start measurement')
@@ -198,33 +217,37 @@ while True:
             break
 
     #測定開始
-    ledWhite.value(0)
-    ZeroOffset = tare()  # 毎回ゼロ合わせ
+    blueLed.value(0)
+    zeroOffset = tareZero()  #毎回ゼロ合わせ
     utime.sleep_ms(300)
 
-    for deg in range(startDeg, endDeg, incDeg):
-        print(f"{deg:3d} deg  ", end = "")
-        d = servoDegree(deg)
+    for deg in range(startDeg, endDeg+incDeg, incDeg):
+        posMm = stepbyDeg * deg
+        print(f"{deg:3d} deg   ", end = "")
+        print(f"{posMm:5.1f} mm  ", end = "")
+        d = servoDegtoHex(deg)
         servo1.duty(d)
-        utime.sleep_ms(150)
-        adV = averageData(6, 1)
-        weight = (adV - ZeroOffset) * (ADC1bit / (Scale * ADCGain))
-        data.append([deg, weight])
+        utime.sleep_ms(5)           #サーボのタイムラグ 0.1sec/60° = 3.3msec＠4.8V
+        adV = averageData(3, 1)     #測定周期 10Hz
+        weight = digiVtoWeight(adV, zeroOffset)
         print(f" {weight:6.1f} gf")
-
-    #保存データを見る
-    # for deg, weight in data:
-    #     print(f"{deg:3d}deg  {weight:8.2f}gf")
-
-
+        data.append([n, deg, posMm, weight])
+    n += 1
     print('push button to next')
     while True:
-        ledWhite.on()
-        if oneSec() == 1:
+        blueLed.on()
+        if tSecWait(1) == 1:
             break
-        ledWhite.off()
-        if oneSec() == 1:
+        blueLed.off()
+        if tSecWait(1) == 1:
             break
     print()
-    ledWhite.on()
+    blueLed.on()
+
+
+#保存データを見る
+for n, deg, posMm, weight in data:
+    print(f"{n:3d}   {deg:3d} deg   {posMm:5.1f} mm   {weight:8.2f} gf")
+
+    
 
