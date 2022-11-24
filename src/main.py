@@ -200,7 +200,7 @@ def tSecWait(t):
 
 #####  MAIN ####################################################################
 data = []
-n = 0
+nd = 0
 
 utime.sleep_ms(500)
 # ready LED on
@@ -231,8 +231,8 @@ while True:
         adV = averageData(3, 1)     #測定周期 10Hz
         weight = digiVtoWeight(adV, zeroOffset)
         print(f" {weight:6.1f} gf")
-        data.append([n, deg, posMm, weight])
-    n += 1
+        data.append([nd, deg, posMm, weight])
+    nd += 1
     print('push button to next')
     while True:
         blueLed.on()
@@ -243,11 +243,14 @@ while True:
             break
     print()
     blueLed.on()
+    
+    if nd >= 99:
+        break
 
 
 #保存データを見る
-for n, deg, posMm, weight in data:
-    print(f"{n:3d}   {deg:3d} deg   {posMm:5.1f} mm   {weight:8.2f} gf")
+for nd, deg, posMm, weight in data:
+    print(f"{nd:3d}   {deg:3d} deg   {posMm:5.1f} mm   {weight:8.2f} gf")
 
-    
+
 
