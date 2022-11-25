@@ -14,7 +14,10 @@
 # 次の行からしかRunされないみたい
 # Uploadしたときは正常に動くよう
 #
+# 全角の"。"もおかしいみたい？
 #
+#
+
 
 print("test")
 print("Hello world!")
