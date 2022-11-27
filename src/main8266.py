@@ -1,9 +1,9 @@
 # loadcell   HX711  500gf
 # servo motor SG92R
 #
-# ESP32
+# ESP8266
 #
-# 2022.11.27
+# 2022.11.18
 #
 
 import math
@@ -125,23 +125,15 @@ def servoMoveDeg(deg1):
 def servoDegtoHex(setDeg):
     if (setDeg < (startDeg-0.09)) or (setDeg > (endDeg+0.09)):
         # 可動範囲外の時リターン
-        print("errorroror")
-        return -9.9, -9.9
+        print("error !!!")
+        return -9.9
     v0 = 74         # 1.45msec = 7.25%
     vn90 = 120      # 2.4msec = 12.0%
     vp90 = 30       # 0.5msec = 2.5%
 
-    v0_u16 = 74*64        # 1.45msec = 7.25%
-    vn90_u16 = 120*64      # 2.4msec = 12.0%
-    vp90_u16 = 30*64       # 0.5msec = 2.5%
-
     degP = setDeg + degOffset                   # サーボへの指令角度
     value = -degP * (vn90 - vp90) / 180 + v0    # 2度ごとにしか設定できない
-
-    value_u16 = -degP * (vn90_u16 - vp90_u16) / 180 + v0_u16
-    #print(value_u16, end=' ')  # debug
-    return int(value), int(value_u16)
-
+    return int(value)
 
 def pwmDuty(percent):
     value = 1024 * percent / 100  # duty 0~1024
@@ -176,17 +168,12 @@ def servoPos():
 def servoMove():
     # サーボを動かして見てみる
     print('SERVO TEST   push button to 1step rotate')
-    posDeg = 0.0  # スタート角度
-    degInc = 0.5  # 変化分
-    du_u16 = 0
+    posDeg = 0  # スタート角度
+    degInc = 2  # 変化分
     while True:
-        #print(posDeg, end = " ")
-        _, du_u16 = servoDegtoHex(posDeg)     #エラーの時-9.9で帰るのでtypeErrorで止まる
-        #servo1.duty(du)      # サーボ　ゼロ位置
-        #print(du_u16, end = " ")
-        servo1.duty_u16(du_u16)
-        #print(f"{posDeg:3d}deg   duty={(du/10.24):5.1f}%  ({du:4d}/1024)")     #ESP8266
-        print(f"{posDeg:5.1f}deg   duty={(du_u16/655.36):5.2f}%  ({du_u16:4d}/65536)")
+        du = servoDegtoHex(posDeg)     #エラーの時-9.9で帰るのでtypeErrorで止まる
+        servo1.duty(du)
+        print(f"{posDeg:3d}deg   duty={(du/10.24):5.1f}%  ({du:4d}/1024)")  # ESP8266
         utime.sleep_ms(2)
 
         while True:
@@ -194,9 +181,9 @@ def servoMove():
                 break
         posDeg += degInc
         if posDeg >= endDeg:
-            degInc = -0.5
+            degInc = -2
         if posDeg <= startDeg:
-            degInc = 0.5
+            degInc = 2
 
 
 # *** 入力等 サブ **************************************************
@@ -227,7 +214,7 @@ while True:
     data = []
 
     #サーボ初期位置
-    d, _ = servoDegtoHex(startDeg)
+    d = servoDegtoHex(startDeg)
     servo1.duty(d)
     utime.sleep_ms(1000)
     # ここで重量表示できると良いかも
@@ -246,7 +233,7 @@ while True:
         posMm = stepbyDeg * (deg - startDeg)
         # print(f"{deg:3d} deg   ", end = "")  # debug
         print(f"{posMm:5.1f} mm  ", end = "")
-        d, _ = servoDegtoHex(deg)
+        d = servoDegtoHex(deg)
         servo1.duty(d)
         utime.sleep_ms(5)           # サーボのタイムラグ 0.1sec/60° = 3.3msec＠4.8V
         utime.sleep_ms(100)         # 動かした後 落ち着かせる場合
